@@ -1,0 +1,25 @@
+{
+  "delegator": "0x1234567890123456789012345678901234567890",
+  "delegate": "0xAgentAddress000000000000000000000000000",
+  "authority": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "caveats": [
+    {
+      "type": "AllowedAmountEnforcer",
+      "data": "1000000000"
+    },
+    {
+      "type": "ExpiryTimeEnforcer",
+      "data": "1739145600"
+    },
+    {
+      "type": "AllowedRecipientsEnforcer",
+      "data": "[\"0xVendor1\", \"0xVendor2\"]"
+    },
+    {
+      "type": "AllowedMethodsEnforcer",
+      "data": "[\"transfer(address,uint256)\"]"
+    }
+  ],
+  "salt": "1739059200000",
+  "signature": "0x..."
+}

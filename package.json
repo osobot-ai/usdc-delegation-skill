@@ -1,0 +1,22 @@
+{
+  "name": "usdc-delegation-skill",
+  "version": "1.0.0",
+  "description": "Scoped USDC permissions with transitive sub-delegations using ERC-7710",
+  "type": "module",
+  "scripts": {
+    "create-delegation": "node scripts/create-delegation.mjs",
+    "create-subdelegation": "node scripts/create-subdelegation.mjs",
+    "execute-transfer": "node scripts/execute-transfer.mjs",
+    "revoke": "node scripts/revoke-delegation.mjs",
+    "check-scope": "node scripts/check-scope.mjs"
+  },
+  "dependencies": {
+    "viem": "^2.21.0",
+    "@metamask/delegation-framework": "^1.0.0",
+    "dotenv": "^16.4.5",
+    "yargs": "^17.7.2"
+  },
+  "keywords": ["usdc", "delegation", "erc-7710", "smart-accounts", "openclaw", "ai-agents"],
+  "author": "Osobot",
+  "license": "MIT"
+}
