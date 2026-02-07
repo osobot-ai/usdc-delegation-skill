@@ -8,6 +8,11 @@
  * The authority field is set to the hash of the parent delegation,
  * creating a verifiable delegation chain.
  * 
+ * Enforcer Stack (simplified):
+ *   1. ValueLteEnforcer(0) - Prevents ETH transfers
+ *   2. ERC20TransferAmountEnforcer - Limits USDC amount (must be <= parent)
+ *   3. TimestampEnforcer - Sets expiry time (must be <= parent)
+ * 
  * Usage:
  *   node create-subdelegation.mjs --parent ./delegation.json --subdelegate 0x... --amount 200 --expiry 12h
  */
@@ -40,22 +45,13 @@ const argv = yargs(hideBin(process.argv))
   })
   .option('amount', {
     type: 'number',
-    description: 'Maximum USDC amount for sub-delegation',
+    description: 'Maximum USDC amount for sub-delegation (must be <= parent)',
     demandOption: true
   })
   .option('expiry', {
     type: 'string',
     description: 'Expiry duration (must be <= parent expiry)',
     demandOption: true
-  })
-  .option('recipients', {
-    type: 'string',
-    description: 'Comma-separated allowed recipients (must be subset of parent)',
-    default: ''
-  })
-  .option('max-calls', {
-    type: 'number',
-    description: 'Maximum number of times sub-delegation can be used'
   })
   .option('output', {
     type: 'string',
@@ -94,15 +90,9 @@ async function main() {
     process.exit(1);
   }
 
-  const allowedRecipients = argv.recipients
-    ? argv.recipients.split(',').map(r => r.trim())
-    : [];
-
   const subDelegationParams = {
     amount: argv.amount,
-    expirySeconds: parseDuration(argv.expiry),
-    allowedRecipients,
-    maxCalls: argv.maxCalls
+    expirySeconds: parseDuration(argv.expiry)
   };
 
   // Validate scope narrowing (ERC-7710 requirement)

@@ -1,168 +1,189 @@
 # USDC Delegation Skill
 
-> **Circle Hackathon - Track 2: Best OpenClaw Skill**
+Scoped USDC permissions with transitive sub-delegations using ERC-7710.
 
-Scoped USDC permissions with **transitive sub-delegations** using [ERC-7710](https://eips.ethereum.org/EIPS/eip-7710) and the [MetaMask Delegation Framework](https://github.com/MetaMask/delegation-framework).
+## Overview
 
-## The Problem
+This skill enables AI agents to:
+1. **Receive scoped USDC permissions** — bounded by amount and time
+2. **Create transitive sub-delegations** — delegate portions of authority to sub-agents
+3. **Execute USDC transfers** within delegated scope via DelegationManager
+4. **Revoke delegations** at any level of the chain (cascades to sub-delegations)
 
-AI agents need to handle money, but giving them full wallet access is dangerous:
-- **Full key access** → Agent can drain everything
-- **No access** → Agent can't do useful financial tasks
-- **Manual approval** → Defeats automation
+## Why This Matters
 
-## The Solution: Scoped Delegations
-
-Grant agents **bounded authority** with ERC-7710:
-
-```
-Human (1000 USDC limit, 24h expiry, approved vendors only)
-    │
-    └── Agent A can spend up to 1000 USDC
-        │
-        └── Sub-Agent B (200 USDC, 12h, vendor X only)
-            │
-            └── Executes 50 USDC payment ✓
-```
-
-**Key properties:**
-- ✅ **Least-privilege** — Agents only get what they need
-- ✅ **Transitive** — Agents can delegate to sub-agents (scope narrows only)
-- ✅ **Revocable** — Human can revoke at any time, invalidating entire chain
-- ✅ **On-chain enforcement** — Smart contract validates all constraints
-- ✅ **EIP-712 signatures** — Proper typed data signing for security
+Traditional agent wallets give full control or nothing. With ERC-7710 delegations:
+- Agents operate with **least-privilege access**
+- Humans retain **revocation authority** at any time
+- Sub-agents can receive **further-scoped permissions**
+- All constraints are **cryptographically enforced on-chain**
 
 ## Architecture
 
-This skill implements proper ERC-7710 compliance:
-
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    MetaMask Delegation Framework                 │
-├─────────────────────────────────────────────────────────────────┤
-│  DelegationManager (0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3) │
-│  ├── redeemDelegations()  - Execute delegated actions           │
-│  └── disableDelegation()  - Revoke delegations                  │
-├─────────────────────────────────────────────────────────────────┤
-│  Caveat Enforcers (on-chain constraint validators)              │
-│  ├── ERC20TransferAmountEnforcer - Max USDC amount              │
-│  ├── TimestampEnforcer           - Expiry time                  │
-│  ├── AllowedTargetsEnforcer      - Recipient whitelist          │
-│  ├── AllowedMethodsEnforcer      - transfer/approve only        │
-│  └── LimitedCallsEnforcer        - Max redemption count         │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### ERC-7710 Delegation Structure
-
-```javascript
-{
-  delegate: "0x...",      // Who receives the authority
-  delegator: "0x...",     // Who grants the authority
-  authority: "0x...",     // Parent delegation hash (or ROOT)
-  caveats: [              // On-chain enforced constraints
-    {
-      enforcer: "0x...",  // CaveatEnforcer contract address
-      terms: "0x...",     // ABI-encoded constraint parameters
-      args: "0x..."       // Runtime arguments (optional)
-    }
-  ],
-  salt: 123456789n,       // Unique nonce
-  signature: "0x..."      // EIP-712 typed signature
-}
+Human (Delegator)
+    │
+    ├── Delegation: 1000 USDC, 24h expiry
+    │   [EIP-712 signed, references DelegationManager]
+    │
+    ▼
+Agent A (Delegate)
+    │
+    ├── Sub-delegation: 200 USDC, 12h expiry
+    │   [authority = hash(parent delegation)]
+    │
+    ▼
+Sub-Agent B (Sub-delegate)
+    │
+    └── Calls DelegationManager.redeemDelegations()
+        with full delegation chain → 50 USDC transfer ✓
 ```
 
-## Quick Start
+## Installation
 
 ```bash
-# Install
 git clone https://github.com/osobot-ai/usdc-delegation-skill.git
-cd usdc-delegation-skill && npm install
+cd usdc-delegation-skill
+npm install
+```
 
-# Configure (testnet only!)
+## Configuration
+
+```bash
 cp .env.example .env
-# Edit .env with your private key
+# Edit .env with your private key (TESTNET ONLY!)
+```
 
-# Create a delegation with EIP-712 signing
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PRIVATE_KEY` | Your wallet private key | Required |
+| `RPC_URL` | RPC endpoint | `https://sepolia.base.org` |
+| `USDC_ADDRESS` | USDC contract | Base Sepolia USDC |
+
+## Usage
+
+### 1. Create a Delegation
+
+Grant an agent scoped USDC permissions:
+
+```bash
 node scripts/create-delegation.mjs \
   --delegate 0xAgentAddress \
-  --amount 1000 --expiry 24h \
-  --recipients 0xVendor1,0xVendor2 \
+  --amount 1000 \
+  --expiry 24h \
   --output delegation.json
+```
 
-# Check delegation scope
+### 2. Check Delegation Scope
+
+Analyze what a delegation permits:
+
+```bash
 node scripts/check-scope.mjs --delegation delegation.json
+```
 
-# Create a transitive sub-delegation
+### 3. Create a Sub-Delegation (Transitive)
+
+Agent delegates a portion of authority to a sub-agent:
+
+```bash
 node scripts/create-subdelegation.mjs \
-  --parent ./delegation.json \
+  --parent delegation.json \
   --subdelegate 0xSubAgentAddress \
-  --amount 200 --expiry 12h \
+  --amount 200 \
+  --expiry 12h \
   --output subdelegation.json
+```
 
-# Execute a transfer (validates all caveats)
+### 4. Execute a Transfer
+
+Execute a transfer via the delegation (validates all caveats):
+
+```bash
 node scripts/execute-transfer.mjs \
-  --delegation ./delegation.json \
-  --to 0xVendor1 --amount 50 \
+  --delegation delegation.json \
+  --to 0xRecipient \
+  --amount 50 \
   --dry-run
+```
 
-# Revoke a delegation (cascades to all sub-delegations)
+### 5. Revoke a Delegation
+
+Revoke on-chain (cascades to all sub-delegations):
+
+```bash
 node scripts/revoke-delegation.mjs \
-  --delegation ./delegation.json \
+  --delegation delegation.json \
   --execute
 ```
 
-## Caveat Enforcers
+## Caveat Enforcers (Simplified Stack)
 
-| Enforcer | Address | Description |
-|----------|---------|-------------|
-| `ERC20TransferAmountEnforcer` | `0xf100b0819427117EcF76Ed94B358B1A5b5C6D2Fc` | Maximum USDC transferable |
-| `TimestampEnforcer` | `0x1046bb45C8d673d4ea75321280DB34899413c069` | Delegation expiration |
-| `AllowedTargetsEnforcer` | `0x7F20f61b1f09b08D970938F6fa563634d65c4EeB` | Whitelist of recipients |
-| `AllowedMethodsEnforcer` | `0x2c21fD0Cb9DC8445CB3fb0DC5E7Bb0Aca01842B5` | Allowed contract methods |
-| `LimitedCallsEnforcer` | `0x04658B29F6b82ed55274221a06Fc97D318E25416` | Maximum redemption count |
+Based on MetaMask Delegation Framework v1.3.0, we use a minimal but complete enforcer set:
 
-All addresses are for the MetaMask Delegation Framework v1.3.0 deployed on Base Sepolia and other networks.
+| Enforcer | Purpose | Terms Encoding |
+|----------|---------|----------------|
+| `ValueLteEnforcer` | Prevent ETH transfers | `uint256` (32 bytes) - set to 0 |
+| `ERC20TransferAmountEnforcer` | Limit USDC + validate token/method | `encodePacked(address, uint256)` (52 bytes) |
+| `TimestampEnforcer` | Expiry time | `encodePacked(uint128, uint128)` (32 bytes) |
+
+### Why This Stack?
+
+**ERC20TransferAmountEnforcer** is the key enforcer. It handles:
+- ✅ Token address validation (target must be USDC)
+- ✅ Method validation (must be `transfer(address,uint256)`)
+- ✅ Amount tracking and limiting
+
+This means we **don't need**:
+- ❌ AllowedMethodsEnforcer (already enforced)
+- ❌ AllowedTargetsEnforcer (already enforced)
+- ❌ LimitedCallsEnforcer (not needed for this use case)
+
+**ValueLteEnforcer(0)** ensures no ETH can be sent with the call, preventing native token transfers.
+
+Sub-delegations can only **narrow** scope, never expand it.
+
+## Contract Addresses (Base Sepolia - v1.3.0)
+
+```
+DelegationManager:           0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3
+ERC20TransferAmountEnforcer: 0xf100b0819427117EcF76Ed94B358B1A5b5C6D2Fc
+TimestampEnforcer:           0x1046bb45C8d673d4ea75321280DB34899413c069
+ValueLteEnforcer:            0x92Bf12322527cAA612fd31a0e810472BBB106A8F
+USDC Token:                  0x036CbD53842c5426634e7929541eC2318f3dCF7e
+```
+
+## ERC-7710 Compliance
+
+This skill implements proper ERC-7710:
+
+- ✅ **Delegation struct** matches on-chain type exactly
+- ✅ **EIP-712 typed data signing** for security
+- ✅ **Real CaveatEnforcer addresses** from MetaMask Delegation Framework v1.3.0
+- ✅ **Proper terms encoding** (encodePacked per enforcer spec)
+- ✅ **Authority chain** links sub-delegations to parents
 
 ## Security Model
 
-### Proper ERC-7710 Compliance
-- ✅ **EIP-712 Typed Data Signing** — Delegations use proper structured data signatures
-- ✅ **Real Caveat Enforcers** — Uses deployed MetaMask Delegation Framework contracts
-- ✅ **Proper Delegation Struct** — Matches the on-chain `Delegation` type exactly
-- ✅ **Authority Chain** — Sub-delegations correctly reference parent delegation hashes
-
-### Security Properties
-1. **Atomic Revocation** — Revoking a delegation invalidates all sub-delegations
-2. **Scope Narrowing Only** — Sub-delegations cannot exceed parent scope
-3. **On-Chain Enforcement** — All constraints verified by smart contract
+1. **Atomic Revocation** — Revoking invalidates entire sub-chain
+2. **Scope Narrowing Only** — Sub-delegations cannot exceed parent
+3. **On-Chain Enforcement** — Constraints verified by smart contracts
 4. **No Key Exposure** — Agents never hold the delegator's private key
-5. **Simulation Before Execution** — Always simulate `redeemDelegations` before submitting
-
-### What This Skill Does NOT Do
-- ❌ Hold private keys for the delegator
-- ❌ Bypass on-chain caveat enforcement
-- ❌ Allow scope expansion in sub-delegations
-- ❌ Execute without proper delegation chain
+5. **ETH Transfer Prevention** — ValueLteEnforcer(0) blocks native transfers
 
 ## Network Support
 
-| Network | Chain ID | USDC Address | Status |
-|---------|----------|--------------|--------|
-| Base Sepolia | 84532 | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` | ✅ Primary |
-| Ethereum Sepolia | 11155111 | - | ✅ Supported |
-| Base Mainnet | 8453 | - | ⚠️ Production |
+- **Base Sepolia** (84532) — Primary testnet
+- **Ethereum Sepolia** (11155111) — Supported
+- **Base Mainnet** (8453) — Production ready
 
 ## References
 
-- [ERC-7710 Specification](https://eips.ethereum.org/EIPS/eip-7710) - Smart Contract Delegation
-- [ERC-7579 Specification](https://eips.ethereum.org/EIPS/eip-7579) - Modular Smart Account
+- [ERC-7710 Specification](https://eips.ethereum.org/EIPS/eip-7710)
 - [MetaMask Delegation Framework](https://github.com/metamask/delegation-framework)
-- [Delegation Framework Deployments](https://github.com/MetaMask/delegation-framework/blob/main/documents/Deployments.md)
-
-## Author
-
-Built by [Osobot](https://x.com/Osobotai) for the Circle USDC Hackathon.
+- [Deployed Contract Addresses](https://github.com/MetaMask/delegation-framework/blob/main/documents/Deployments.md)
+- [ERC20TransferAmountEnforcer Source](https://github.com/MetaMask/delegation-framework/blob/main/src/enforcers/ERC20TransferAmountEnforcer.sol)
+- [ValueLteEnforcer Source](https://github.com/MetaMask/delegation-framework/blob/main/src/enforcers/ValueLteEnforcer.sol)
 
 ## License
 

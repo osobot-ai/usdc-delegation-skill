@@ -13,7 +13,7 @@ import 'dotenv/config';
 import { readFileSync } from 'fs';
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
-import { formatUnits, decodeAbiParameters, parseAbiParameters } from 'viem';
+import { formatUnits } from 'viem';
 import { 
   formatDelegation, 
   getDelegationHash, 
@@ -93,17 +93,18 @@ async function main() {
     try {
       switch (enforcerName) {
         case 'ERC20TransferAmountEnforcer': {
-          // Terms: (address token, uint256 amount)
-          const token = '0x' + caveat.terms.slice(26, 66);
-          const amount = BigInt('0x' + caveat.terms.slice(66));
+          // Terms: encodePacked(address[20], uint256[32]) = 52 bytes
+          const token = '0x' + caveat.terms.slice(2, 42);
+          const amount = BigInt('0x' + caveat.terms.slice(42));
           console.log(`     💰 Maximum Amount: ${formatUnits(amount, USDC_DECIMALS)} USDC`);
           console.log(`     📍 Token: ${token}`);
+          console.log(`     🔧 Method: transfer(address,uint256) only`);
           console.log(`     Status: ✅ Active`);
           break;
         }
         
         case 'TimestampEnforcer': {
-          // Terms: (uint128 threshold, uint128 mode)
+          // Terms: encodePacked(uint128[16], uint128[16]) = 32 bytes
           const threshold = Number(BigInt('0x' + caveat.terms.slice(2, 34)));
           const mode = Number(BigInt('0x' + caveat.terms.slice(34, 66)));
           const expiry = new Date(threshold * 1000);
@@ -130,41 +131,17 @@ async function main() {
           break;
         }
         
-        case 'AllowedTargetsEnforcer': {
-          // Terms: (address[])
-          // Simplified - would need proper ABI decoding
-          console.log(`     📬 Restricts transfer recipients`);
-          console.log(`     Status: ✅ Active`);
-          if (argv.verbose) {
-            console.log(`     Raw terms: ${caveat.terms}`);
+        case 'ValueLteEnforcer': {
+          // Terms: uint256 as bytes32 (32 bytes)
+          const maxValue = BigInt(caveat.terms);
+          if (maxValue === 0n) {
+            console.log(`     🚫 Max ETH Value: 0 (prevents ETH transfers)`);
+            console.log(`     📝 Purpose: Ensures only ERC20 transfers, no native ETH`);
+            console.log(`     Status: ✅ Active`);
+          } else {
+            console.log(`     💎 Max ETH Value: ${formatUnits(maxValue, 18)} ETH`);
+            console.log(`     Status: ✅ Active`);
           }
-          break;
-        }
-        
-        case 'AllowedMethodsEnforcer': {
-          // Terms: packed bytes4[]
-          const selectorsCount = (caveat.terms.length - 2) / 8;
-          const selectors = [];
-          for (let j = 0; j < selectorsCount; j++) {
-            selectors.push(caveat.terms.slice(2 + j * 8, 10 + j * 8));
-          }
-          console.log(`     🔧 Allowed method selectors: ${selectors.length}`);
-          selectors.forEach(s => {
-            const known = {
-              'a9059cbb': 'transfer(address,uint256)',
-              '095ea7b3': 'approve(address,uint256)',
-              '23b872dd': 'transferFrom(address,address,uint256)'
-            };
-            console.log(`        - 0x${s} ${known[s] ? `(${known[s]})` : ''}`);
-          });
-          console.log(`     Status: ✅ Active`);
-          break;
-        }
-        
-        case 'LimitedCallsEnforcer': {
-          const maxCalls = BigInt('0x' + caveat.terms.slice(2));
-          console.log(`     📊 Maximum calls: ${maxCalls}`);
-          console.log(`     Status: ✅ Active (check on-chain for remaining)`);
           break;
         }
         
@@ -206,13 +183,17 @@ async function main() {
   const hasExpiry = delegation.caveats.some(c => 
     c.enforcer.toLowerCase() === DELEGATION_FRAMEWORK.TimestampEnforcer.toLowerCase()
   );
-  const hasMethods = delegation.caveats.some(c => 
-    c.enforcer.toLowerCase() === DELEGATION_FRAMEWORK.AllowedMethodsEnforcer.toLowerCase()
+  const hasValueLimit = delegation.caveats.some(c => 
+    c.enforcer.toLowerCase() === DELEGATION_FRAMEWORK.ValueLteEnforcer.toLowerCase()
   );
   
-  console.log(`  Amount Limit:     ${hasAmount ? '✅' : '⚠️  Missing (DANGEROUS)'}`);
-  console.log(`  Expiry Time:      ${hasExpiry ? '✅' : '⚠️  Missing (indefinite)'}`);
-  console.log(`  Method Restrict:  ${hasMethods ? '✅' : '⚠️  Missing'}`);
+  console.log(`  Amount Limit:      ${hasAmount ? '✅' : '⚠️  Missing (DANGEROUS)'}`);
+  console.log(`  Expiry Time:       ${hasExpiry ? '✅' : '⚠️  Missing (indefinite)'}`);
+  console.log(`  ETH Prevention:    ${hasValueLimit ? '✅' : '⚠️  Missing (can transfer ETH)'}`);
+  
+  if (hasAmount && hasExpiry && hasValueLimit) {
+    console.log('\n  ✅ Properly scoped delegation with all recommended enforcers');
+  }
   
   // Metadata if present
   if (raw._meta) {

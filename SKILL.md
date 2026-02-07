@@ -5,7 +5,7 @@ Scoped USDC permissions with transitive sub-delegations using ERC-7710.
 ## Overview
 
 This skill enables AI agents to:
-1. **Receive scoped USDC permissions** — bounded by amount, time, and recipients
+1. **Receive scoped USDC permissions** — bounded by amount and time
 2. **Create transitive sub-delegations** — delegate portions of authority to sub-agents
 3. **Execute USDC transfers** within delegated scope via DelegationManager
 4. **Revoke delegations** at any level of the chain (cascades to sub-delegations)
@@ -23,20 +23,20 @@ Traditional agent wallets give full control or nothing. With ERC-7710 delegation
 ```
 Human (Delegator)
     │
-    ├── Delegation: 1000 USDC, 24h expiry, only to approved vendors
+    ├── Delegation: 1000 USDC, 24h expiry
     │   [EIP-712 signed, references DelegationManager]
     │
     ▼
 Agent A (Delegate)
     │
-    ├── Sub-delegation: 200 USDC, 12h expiry, only to vendor X
+    ├── Sub-delegation: 200 USDC, 12h expiry
     │   [authority = hash(parent delegation)]
     │
     ▼
 Sub-Agent B (Sub-delegate)
     │
     └── Calls DelegationManager.redeemDelegations()
-        with full delegation chain → 50 USDC to vendor X ✓
+        with full delegation chain → 50 USDC transfer ✓
 ```
 
 ## Installation
@@ -71,7 +71,6 @@ node scripts/create-delegation.mjs \
   --delegate 0xAgentAddress \
   --amount 1000 \
   --expiry 24h \
-  --recipients 0xVendor1,0xVendor2 \
   --output delegation.json
 ```
 
@@ -118,17 +117,41 @@ node scripts/revoke-delegation.mjs \
   --execute
 ```
 
-## Caveat Enforcers (On-Chain Constraints)
+## Caveat Enforcers (Simplified Stack)
+
+Based on MetaMask Delegation Framework v1.3.0, we use a minimal but complete enforcer set:
 
 | Enforcer | Purpose | Terms Encoding |
 |----------|---------|----------------|
-| `ERC20TransferAmountEnforcer` | Max USDC | `(address token, uint256 amount)` |
-| `TimestampEnforcer` | Expiry | `(uint128 threshold, uint128 mode)` |
-| `AllowedTargetsEnforcer` | Recipients | `(address[])` |
-| `AllowedMethodsEnforcer` | Methods | packed `bytes4[]` selectors |
-| `LimitedCallsEnforcer` | Max calls | `(uint256 maxCalls)` |
+| `ValueLteEnforcer` | Prevent ETH transfers | `uint256` (32 bytes) - set to 0 |
+| `ERC20TransferAmountEnforcer` | Limit USDC + validate token/method | `encodePacked(address, uint256)` (52 bytes) |
+| `TimestampEnforcer` | Expiry time | `encodePacked(uint128, uint128)` (32 bytes) |
+
+### Why This Stack?
+
+**ERC20TransferAmountEnforcer** is the key enforcer. It handles:
+- ✅ Token address validation (target must be USDC)
+- ✅ Method validation (must be `transfer(address,uint256)`)
+- ✅ Amount tracking and limiting
+
+This means we **don't need**:
+- ❌ AllowedMethodsEnforcer (already enforced)
+- ❌ AllowedTargetsEnforcer (already enforced)
+- ❌ LimitedCallsEnforcer (not needed for this use case)
+
+**ValueLteEnforcer(0)** ensures no ETH can be sent with the call, preventing native token transfers.
 
 Sub-delegations can only **narrow** scope, never expand it.
+
+## Contract Addresses (Base Sepolia - v1.3.0)
+
+```
+DelegationManager:           0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3
+ERC20TransferAmountEnforcer: 0xf100b0819427117EcF76Ed94B358B1A5b5C6D2Fc
+TimestampEnforcer:           0x1046bb45C8d673d4ea75321280DB34899413c069
+ValueLteEnforcer:            0x92Bf12322527cAA612fd31a0e810472BBB106A8F
+USDC Token:                  0x036CbD53842c5426634e7929541eC2318f3dCF7e
+```
 
 ## ERC-7710 Compliance
 
@@ -137,7 +160,7 @@ This skill implements proper ERC-7710:
 - ✅ **Delegation struct** matches on-chain type exactly
 - ✅ **EIP-712 typed data signing** for security
 - ✅ **Real CaveatEnforcer addresses** from MetaMask Delegation Framework v1.3.0
-- ✅ **Proper terms encoding** (ABI-encoded per enforcer spec)
+- ✅ **Proper terms encoding** (encodePacked per enforcer spec)
 - ✅ **Authority chain** links sub-delegations to parents
 
 ## Security Model
@@ -146,7 +169,7 @@ This skill implements proper ERC-7710:
 2. **Scope Narrowing Only** — Sub-delegations cannot exceed parent
 3. **On-Chain Enforcement** — Constraints verified by smart contracts
 4. **No Key Exposure** — Agents never hold the delegator's private key
-5. **Simulation** — Always simulate before on-chain execution
+5. **ETH Transfer Prevention** — ValueLteEnforcer(0) blocks native transfers
 
 ## Network Support
 
@@ -159,6 +182,8 @@ This skill implements proper ERC-7710:
 - [ERC-7710 Specification](https://eips.ethereum.org/EIPS/eip-7710)
 - [MetaMask Delegation Framework](https://github.com/metamask/delegation-framework)
 - [Deployed Contract Addresses](https://github.com/MetaMask/delegation-framework/blob/main/documents/Deployments.md)
+- [ERC20TransferAmountEnforcer Source](https://github.com/MetaMask/delegation-framework/blob/main/src/enforcers/ERC20TransferAmountEnforcer.sol)
+- [ValueLteEnforcer Source](https://github.com/MetaMask/delegation-framework/blob/main/src/enforcers/ValueLteEnforcer.sol)
 
 ## License
 

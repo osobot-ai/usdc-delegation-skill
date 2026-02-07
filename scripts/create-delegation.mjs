@@ -5,9 +5,14 @@
  * This creates an ERC-7710 compliant delegation using the MetaMask Delegation Framework.
  * The delegation is signed with EIP-712 typed data and can be shared offchain.
  * 
+ * Enforcer Stack (simplified):
+ *   1. ValueLteEnforcer(0) - Prevents ETH transfers
+ *   2. ERC20TransferAmountEnforcer - Limits USDC amount AND validates token/method
+ *   3. TimestampEnforcer - Sets expiry time
+ * 
  * Usage:
  *   node create-delegation.mjs --delegate 0x... --amount 1000 --expiry 24h
- *   node create-delegation.mjs --delegate 0x... --amount 500 --expiry 7d --recipients 0xA,0xB
+ *   node create-delegation.mjs --delegate 0x... --amount 500 --expiry 7d -o delegation.json
  */
 
 import 'dotenv/config';
@@ -41,15 +46,6 @@ const argv = yargs(hideBin(process.argv))
     description: 'Expiry duration (e.g., 24h, 7d)',
     demandOption: true
   })
-  .option('recipients', {
-    type: 'string',
-    description: 'Comma-separated list of allowed recipient addresses',
-    default: ''
-  })
-  .option('max-calls', {
-    type: 'number',
-    description: 'Maximum number of times delegation can be used'
-  })
   .option('output', {
     type: 'string',
     alias: 'o',
@@ -65,28 +61,25 @@ async function main() {
   }
 
   console.log('🔐 Creating ERC-7710 USDC Delegation\n');
-  console.log('📋 Framework Contracts:');
-  console.log(`   DelegationManager: ${DELEGATION_FRAMEWORK.DelegationManager}`);
-  console.log(`   USDC Token:        ${USDC_ADDRESS}`);
+  console.log('📋 Framework Contracts (v1.3.0):');
+  console.log(`   DelegationManager:          ${DELEGATION_FRAMEWORK.DelegationManager}`);
+  console.log(`   ERC20TransferAmountEnforcer: ${DELEGATION_FRAMEWORK.ERC20TransferAmountEnforcer}`);
+  console.log(`   ValueLteEnforcer:           ${DELEGATION_FRAMEWORK.ValueLteEnforcer}`);
+  console.log(`   TimestampEnforcer:          ${DELEGATION_FRAMEWORK.TimestampEnforcer}`);
+  console.log(`   USDC Token:                 ${USDC_ADDRESS}`);
   console.log('');
 
   const { walletClient, account, chain } = getClients(process.env.PRIVATE_KEY);
   
   console.log(`📍 Network: ${chain.name} (${chain.id})`);
   console.log(`👤 Delegator: ${account.address}\n`);
-  
-  const allowedRecipients = argv.recipients 
-    ? argv.recipients.split(',').map(r => r.trim())
-    : [];
 
-  // Build the delegation with proper ERC-7710 caveats
+  // Build the delegation with simplified enforcer stack
   const delegation = buildDelegation({
     delegator: account.address,
     delegate: argv.delegate,
     amount: argv.amount,
-    expirySeconds: parseDuration(argv.expiry),
-    allowedRecipients,
-    maxCalls: argv.maxCalls
+    expirySeconds: parseDuration(argv.expiry)
   });
 
   console.log('📝 Signing with EIP-712...');
@@ -105,7 +98,12 @@ async function main() {
       chain: chain.name,
       chainId: chain.id,
       usdcAddress: USDC_ADDRESS,
-      delegationManager: DELEGATION_FRAMEWORK.DelegationManager
+      delegationManager: DELEGATION_FRAMEWORK.DelegationManager,
+      enforcers: {
+        ValueLteEnforcer: DELEGATION_FRAMEWORK.ValueLteEnforcer,
+        ERC20TransferAmountEnforcer: DELEGATION_FRAMEWORK.ERC20TransferAmountEnforcer,
+        TimestampEnforcer: DELEGATION_FRAMEWORK.TimestampEnforcer
+      }
     }
   };
 
