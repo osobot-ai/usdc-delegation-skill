@@ -1,7 +1,7 @@
 {
   "name": "usdc-delegation-skill",
-  "version": "1.0.0",
-  "description": "Scoped USDC permissions with transitive sub-delegations using ERC-7710",
+  "version": "1.1.0",
+  "description": "Scoped USDC permissions with transitive sub-delegations using ERC-7710 and MetaMask Delegation Framework",
   "type": "module",
   "scripts": {
     "create-delegation": "node scripts/create-delegation.mjs",
@@ -12,11 +12,29 @@
   },
   "dependencies": {
     "viem": "^2.21.0",
-    "@metamask/delegation-framework": "^1.0.0",
     "dotenv": "^16.4.5",
     "yargs": "^17.7.2"
   },
-  "keywords": ["usdc", "delegation", "erc-7710", "smart-accounts", "openclaw", "ai-agents"],
+  "devDependencies": {},
+  "keywords": [
+    "usdc",
+    "delegation",
+    "erc-7710",
+    "erc-7579",
+    "smart-accounts",
+    "metamask-delegation-framework",
+    "openclaw",
+    "ai-agents",
+    "circle",
+    "base"
+  ],
   "author": "Osobot",
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/osobot-ai/usdc-delegation-skill.git"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
 }

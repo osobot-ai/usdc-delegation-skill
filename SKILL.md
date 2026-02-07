@@ -5,10 +5,10 @@ Scoped USDC permissions with transitive sub-delegations using ERC-7710.
 ## Overview
 
 This skill enables AI agents to:
-1. **Receive scoped USDC permissions** — bounded by amount, time, and recipient
-2. **Create transitive sub-delegations** — delegate portions of their authority to sub-agents
-3. **Execute USDC transfers** within their delegated scope
-4. **Revoke delegations** at any level of the chain
+1. **Receive scoped USDC permissions** — bounded by amount, time, and recipients
+2. **Create transitive sub-delegations** — delegate portions of authority to sub-agents
+3. **Execute USDC transfers** within delegated scope via DelegationManager
+4. **Revoke delegations** at any level of the chain (cascades to sub-delegations)
 
 ## Why This Matters
 
@@ -24,41 +24,41 @@ Traditional agent wallets give full control or nothing. With ERC-7710 delegation
 Human (Delegator)
     │
     ├── Delegation: 1000 USDC, 24h expiry, only to approved vendors
+    │   [EIP-712 signed, references DelegationManager]
     │
     ▼
 Agent A (Delegate)
     │
     ├── Sub-delegation: 200 USDC, 12h expiry, only to vendor X
+    │   [authority = hash(parent delegation)]
     │
     ▼
 Sub-Agent B (Sub-delegate)
     │
-    └── Executes transfer: 50 USDC to vendor X ✓
+    └── Calls DelegationManager.redeemDelegations()
+        with full delegation chain → 50 USDC to vendor X ✓
 ```
 
 ## Installation
 
 ```bash
-# Clone the skill
 git clone https://github.com/osobot-ai/usdc-delegation-skill.git
-
-# Install dependencies
 cd usdc-delegation-skill
 npm install
 ```
 
 ## Configuration
 
-Set environment variables or create `.env`:
-
 ```bash
-# Required
-PRIVATE_KEY=0x...           # Delegator's private key (testnet only!)
-RPC_URL=https://...         # Base Sepolia or other testnet
-
-# Optional
-USDC_ADDRESS=0x...          # USDC contract (defaults to Base Sepolia USDC)
+cp .env.example .env
+# Edit .env with your private key (TESTNET ONLY!)
 ```
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PRIVATE_KEY` | Your wallet private key | Required |
+| `RPC_URL` | RPC endpoint | `https://sepolia.base.org` |
+| `USDC_ADDRESS` | USDC contract | Base Sepolia USDC |
 
 ## Usage
 
@@ -71,97 +71,94 @@ node scripts/create-delegation.mjs \
   --delegate 0xAgentAddress \
   --amount 1000 \
   --expiry 24h \
-  --allowedRecipients 0xVendor1,0xVendor2
+  --recipients 0xVendor1,0xVendor2 \
+  --output delegation.json
 ```
 
-### 2. Create a Sub-Delegation (Transitive)
+### 2. Check Delegation Scope
 
-Agent delegates a portion of their authority to a sub-agent:
+Analyze what a delegation permits:
+
+```bash
+node scripts/check-scope.mjs --delegation delegation.json
+```
+
+### 3. Create a Sub-Delegation (Transitive)
+
+Agent delegates a portion of authority to a sub-agent:
 
 ```bash
 node scripts/create-subdelegation.mjs \
-  --parentDelegation 0xDelegationHash \
-  --subDelegate 0xSubAgentAddress \
+  --parent delegation.json \
+  --subdelegate 0xSubAgentAddress \
   --amount 200 \
-  --expiry 12h
+  --expiry 12h \
+  --output subdelegation.json
 ```
 
-### 3. Execute a Transfer
+### 4. Execute a Transfer
 
-Sub-agent executes a transfer within their delegated scope:
+Execute a transfer via the delegation (validates all caveats):
 
 ```bash
 node scripts/execute-transfer.mjs \
-  --delegation 0xDelegationHash \
+  --delegation delegation.json \
   --to 0xRecipient \
-  --amount 50
+  --amount 50 \
+  --dry-run
 ```
 
-### 4. Revoke a Delegation
+### 5. Revoke a Delegation
 
-Revoke at any level — cascades to all sub-delegations:
+Revoke on-chain (cascades to all sub-delegations):
 
 ```bash
 node scripts/revoke-delegation.mjs \
-  --delegation 0xDelegationHash
+  --delegation delegation.json \
+  --execute
 ```
 
-## Caveats (Scope Constraints)
+## Caveat Enforcers (On-Chain Constraints)
 
-| Caveat | Description |
-|--------|-------------|
-| `AllowedAmount` | Maximum USDC that can be transferred |
-| `ExpiryTime` | Delegation expires after this timestamp |
-| `AllowedRecipients` | Whitelist of valid transfer recipients |
-| `AllowedMethods` | Restrict to specific contract methods (e.g., `transfer`) |
+| Enforcer | Purpose | Terms Encoding |
+|----------|---------|----------------|
+| `ERC20TransferAmountEnforcer` | Max USDC | `(address token, uint256 amount)` |
+| `TimestampEnforcer` | Expiry | `(uint128 threshold, uint128 mode)` |
+| `AllowedTargetsEnforcer` | Recipients | `(address[])` |
+| `AllowedMethodsEnforcer` | Methods | packed `bytes4[]` selectors |
+| `LimitedCallsEnforcer` | Max calls | `(uint256 maxCalls)` |
 
 Sub-delegations can only **narrow** scope, never expand it.
 
-## Example: Multi-Agent Payment Flow
+## ERC-7710 Compliance
 
-```javascript
-// Human creates delegation for primary agent
-const delegation = await createDelegation({
-  delegate: primaryAgent,
-  amount: 5000,
-  expiry: '7d',
-  allowedRecipients: [vendorA, vendorB, vendorC]
-});
+This skill implements proper ERC-7710:
 
-// Primary agent creates sub-delegation for specialist agent
-const subDelegation = await createSubDelegation({
-  parentDelegation: delegation,
-  subDelegate: specialistAgent,
-  amount: 1000,
-  allowedRecipients: [vendorA] // Further restricted
-});
-
-// Specialist agent executes payment
-await executeTransfer({
-  delegation: subDelegation,
-  to: vendorA,
-  amount: 500
-});
-```
+- ✅ **Delegation struct** matches on-chain type exactly
+- ✅ **EIP-712 typed data signing** for security
+- ✅ **Real CaveatEnforcer addresses** from MetaMask Delegation Framework v1.3.0
+- ✅ **Proper terms encoding** (ABI-encoded per enforcer spec)
+- ✅ **Authority chain** links sub-delegations to parents
 
 ## Security Model
 
-1. **Atomic Revocation** — Revoking a delegation invalidates all sub-delegations
-2. **Scope Narrowing Only** — Sub-delegations cannot exceed parent scope
-3. **On-Chain Enforcement** — All constraints verified by smart contract
+1. **Atomic Revocation** — Revoking invalidates entire sub-chain
+2. **Scope Narrowing Only** — Sub-delegations cannot exceed parent
+3. **On-Chain Enforcement** — Constraints verified by smart contracts
 4. **No Key Exposure** — Agents never hold the delegator's private key
+5. **Simulation** — Always simulate before on-chain execution
 
 ## Network Support
 
-- Base Sepolia (testnet) — Primary
-- Ethereum Sepolia (testnet)
-- Base Mainnet (production)
+- **Base Sepolia** (84532) — Primary testnet
+- **Ethereum Sepolia** (11155111) — Supported
+- **Base Mainnet** (8453) — Production ready
 
 ## References
 
 - [ERC-7710 Specification](https://eips.ethereum.org/EIPS/eip-7710)
 - [MetaMask Delegation Framework](https://github.com/metamask/delegation-framework)
-- [Smart Accounts Kit](https://docs.metamask.io/developer-tools/smart-accounts-kit/)
+- [Deployed Contract Addresses](https://github.com/MetaMask/delegation-framework/blob/main/documents/Deployments.md)
 
 ## License
 
