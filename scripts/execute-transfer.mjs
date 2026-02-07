@@ -17,7 +17,7 @@ import 'dotenv/config';
 import { readFileSync } from 'fs';
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
-import { parseUnits, formatUnits, encodeFunctionData, keccak256, toBytes } from 'viem';
+import { parseUnits, formatUnits, encodeFunctionData, encodeAbiParameters, parseAbiParameters } from 'viem';
 import { 
   getClients, 
   validateTransfer, 
@@ -43,7 +43,30 @@ const USDC_ABI = [
   }
 ];
 
-// DelegationManager ABI (partial)
+// Caveat tuple type for ABI encoding
+const CAVEAT_TUPLE = {
+  type: 'tuple',
+  components: [
+    { name: 'enforcer', type: 'address' },
+    { name: 'terms', type: 'bytes' },
+    { name: 'args', type: 'bytes' }
+  ]
+};
+
+// Delegation tuple type for ABI encoding
+const DELEGATION_TUPLE = {
+  type: 'tuple',
+  components: [
+    { name: 'delegate', type: 'address' },
+    { name: 'delegator', type: 'address' },
+    { name: 'authority', type: 'bytes32' },
+    { name: 'caveats', type: 'tuple[]', components: CAVEAT_TUPLE.components },
+    { name: 'salt', type: 'uint256' },
+    { name: 'signature', type: 'bytes' }
+  ]
+};
+
+// DelegationManager ABI (partial) - matches v1.3.0
 const DELEGATION_MANAGER_ABI = [
   {
     name: 'redeemDelegations',
@@ -194,11 +217,15 @@ async function main() {
 /**
  * Build the ABI-encoded permission context for a delegation chain
  * The context is an array of Delegation structs, leaf to root
+ * 
+ * Per DelegationManager.sol:
+ *   Delegation[] memory delegations_ = abi.decode(_permissionContexts[batchIndex_], (Delegation[]));
+ * 
+ * So we need to ABI encode an array of Delegation tuples.
  */
 function buildPermissionContext(delegationChain) {
-  // In production, this would be proper ABI encoding of the Delegation[] array
-  // For now, we encode as the raw delegation data
-  const encoded = delegationChain.map(d => ({
+  // Prepare the delegations for ABI encoding
+  const delegations = delegationChain.map(d => ({
     delegate: d.delegate,
     delegator: d.delegator,
     authority: d.authority,
@@ -207,13 +234,18 @@ function buildPermissionContext(delegationChain) {
       terms: c.terms,
       args: c.args || '0x'
     })),
-    salt: d.salt.toString(),
+    salt: typeof d.salt === 'bigint' ? d.salt : BigInt(d.salt),
     signature: d.signature
   }));
   
-  // Return as hex-encoded JSON for demo
-  // Production would use proper ABI encoding
-  return '0x' + Buffer.from(JSON.stringify(encoded)).toString('hex');
+  // ABI encode as Delegation[] (tuple array)
+  return encodeAbiParameters(
+    [{
+      type: 'tuple[]',
+      components: DELEGATION_TUPLE.components
+    }],
+    [delegations]
+  );
 }
 
 main().catch(console.error);

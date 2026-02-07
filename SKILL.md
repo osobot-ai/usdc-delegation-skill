@@ -21,23 +21,26 @@ Traditional agent wallets give full control or nothing. With ERC-7710 delegation
 ## Architecture
 
 ```
-Human (Delegator)
+Human (owns DeleGator Smart Account)
     │
-    ├── Delegation: 1000 USDC, 24h expiry
-    │   [EIP-712 signed, references DelegationManager]
+    ├── Signs Delegation: 1000 USDC, 24h expiry
+    │   [EIP-712 signed, delegator = Smart Account address]
     │
     ▼
 Agent A (Delegate)
     │
-    ├── Sub-delegation: 200 USDC, 12h expiry
+    ├── Creates Sub-delegation: 200 USDC, 12h expiry
     │   [authority = hash(parent delegation)]
     │
     ▼
 Sub-Agent B (Sub-delegate)
     │
     └── Calls DelegationManager.redeemDelegations()
-        with full delegation chain → 50 USDC transfer ✓
+        → DelegationManager calls Smart Account.executeFromExecutor()
+        → 50 USDC transfer ✓
 ```
+
+> **Note**: The delegator MUST be a DeleGator Smart Account (HybridDeleGator, MultiSigDeleGator, etc.), not an EOA. The DelegationManager calls `executeFromExecutor()` on the delegator.
 
 ## Installation
 
@@ -125,7 +128,9 @@ Based on MetaMask Delegation Framework v1.3.0, we use a minimal but complete enf
 |----------|---------|----------------|
 | `ValueLteEnforcer` | Prevent ETH transfers | `uint256` (32 bytes) - set to 0 |
 | `ERC20TransferAmountEnforcer` | Limit USDC + validate token/method | `encodePacked(address, uint256)` (52 bytes) |
-| `TimestampEnforcer` | Expiry time | `encodePacked(uint128, uint128)` (32 bytes) |
+| `TimestampEnforcer` | Time window | `encodePacked(uint128 afterThreshold, uint128 beforeThreshold)` (32 bytes) |
+
+> TimestampEnforcer uses two thresholds: `afterThreshold` (must execute AFTER, 0=no min) and `beforeThreshold` (must execute BEFORE, 0=no max/expiry).
 
 ### Why This Stack?
 
@@ -151,6 +156,10 @@ ERC20TransferAmountEnforcer: 0xf100b0819427117EcF76Ed94B358B1A5b5C6D2Fc
 TimestampEnforcer:           0x1046bb45C8d673d4ea75321280DB34899413c069
 ValueLteEnforcer:            0x92Bf12322527cAA612fd31a0e810472BBB106A8F
 USDC Token:                  0x036CbD53842c5426634e7929541eC2318f3dCF7e
+
+# Important Constants
+ROOT_AUTHORITY:              0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+ANY_DELEGATE:                0x0000000000000000000000000000000000000a11
 ```
 
 ## ERC-7710 Compliance

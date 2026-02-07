@@ -1,25 +1,40 @@
 {
-  "delegator": "0x1234567890123456789012345678901234567890",
-  "delegate": "0xAgentAddress000000000000000000000000000",
-  "authority": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "delegate": "0x1111111111111111111111111111111111111111",
+  "delegator": "0x2222222222222222222222222222222222222222",
+  "authority": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
   "caveats": [
     {
-      "type": "AllowedAmountEnforcer",
-      "data": "1000000000"
+      "enforcer": "0x92Bf12322527cAA612fd31a0e810472BBB106A8F",
+      "terms": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "args": "0x",
+      "_comment": "ValueLteEnforcer(0) - prevents ETH transfers"
     },
     {
-      "type": "ExpiryTimeEnforcer",
-      "data": "1739145600"
+      "enforcer": "0xf100b0819427117EcF76Ed94B358B1A5b5C6D2Fc",
+      "terms": "0x036cbd53842c5426634e7929541ec2318f3dcf7e00000000000000000000000000000000000000000000000000000000000f4240",
+      "args": "0x",
+      "_comment": "ERC20TransferAmountEnforcer - token=USDC, amount=1000000 (1 USDC)"
     },
     {
-      "type": "AllowedRecipientsEnforcer",
-      "data": "[\"0xVendor1\", \"0xVendor2\"]"
-    },
-    {
-      "type": "AllowedMethodsEnforcer",
-      "data": "[\"transfer(address,uint256)\"]"
+      "enforcer": "0x1046bb45C8d673d4ea75321280DB34899413c069",
+      "terms": "0x00000000000000000000000000000000000000000000000000000000679f4e00",
+      "args": "0x",
+      "_comment": "TimestampEnforcer - afterThreshold=0 (no min), beforeThreshold=1738399232 (expiry)"
     }
   ],
-  "salt": "1739059200000",
-  "signature": "0x..."
+  "salt": "1738312832000",
+  "signature": "0x...",
+  "_meta": {
+    "createdAt": "2026-01-31T12:00:00.000Z",
+    "delegationHash": "0x...",
+    "chain": "Base Sepolia",
+    "chainId": 84532,
+    "usdcAddress": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+    "delegationManager": "0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3",
+    "enforcers": {
+      "ValueLteEnforcer": "0x92Bf12322527cAA612fd31a0e810472BBB106A8F",
+      "ERC20TransferAmountEnforcer": "0xf100b0819427117EcF76Ed94B358B1A5b5C6D2Fc",
+      "TimestampEnforcer": "0x1046bb45C8d673d4ea75321280DB34899413c069"
+    }
+  }
 }
