@@ -40,7 +40,9 @@ Sub-Agent B (Sub-delegate)
         → 50 USDC transfer ✓
 ```
 
-> **Note**: The delegator MUST be a DeleGator Smart Account (HybridDeleGator, MultiSigDeleGator, etc.), not an EOA. The DelegationManager calls `executeFromExecutor()` on the delegator.
+> **Account Requirements:**
+> - **Root Delegator:** Must be a DeleGator Smart Account
+> - **Delegates/Sub-delegates:** Can be EOA or Smart Account — your agent can use a simple wallet!
 
 ## Installation
 

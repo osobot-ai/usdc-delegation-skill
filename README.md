@@ -40,24 +40,20 @@ Sub-Agent B (Sub-delegate)
         → 50 USDC transfer ✓
 ```
 
-### ⚠️ IMPORTANT: DeleGator Smart Account Requirement
+### ⚠️ IMPORTANT: Account Requirements
 
-The MetaMask Delegation Framework requires the **delegator to be a DeleGator Smart Account** (or compatible ERC-7579 modular account), NOT an EOA.
+**Root Delegator (Human/Owner):** Must be a DeleGator Smart Account (HybridDeleGator, MultiSigDeleGator, etc.) because the DelegationManager calls `executeFromExecutor()` on it.
 
-When `redeemDelegations()` is called, the DelegationManager executes:
-```solidity
-IDeleGatorCore(delegator).executeFromExecutor(mode, executionCallData);
-```
-
-This means:
-- ✅ Delegator = DeleGator Smart Account (HybridDeleGator, MultiSigDeleGator, etc.)
-- ❌ Delegator = EOA (will revert - EOAs don't have `executeFromExecutor`)
+**Delegates & Sub-delegates (Agents):** Can be **EOA OR Smart Account**! This is key:
+- ✅ Agent with simple EOA wallet CAN receive delegations
+- ✅ Agent with EOA CAN create sub-delegations  
+- ✅ Agent with EOA CAN redeem delegations to execute transfers
 
 **How it works:**
-1. Human deploys/owns a DeleGator Smart Account
-2. Human signs delegations (EIP-712) for that Smart Account
-3. Delegate redeems via DelegationManager
-4. DelegationManager calls the Smart Account to execute
+1. Human owns a DeleGator Smart Account (holds the USDC)
+2. Human signs delegation (EIP-712) granting agent permissions
+3. Agent (even if just an EOA) redeems via DelegationManager
+4. DelegationManager calls the Human's Smart Account to execute the transfer
 
 ## Installation
 
