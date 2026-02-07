@@ -81,10 +81,12 @@ export const EIP712_TYPES = {
 };
 
 // Root authority constant (for root delegations)
-export const ROOT_AUTHORITY = '0x0000000000000000000000000000000000000000000000000000000000000000';
+// Per DelegationManager.sol: bytes32 public constant ROOT_AUTHORITY = 0xfff...fff
+export const ROOT_AUTHORITY = '0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
 
-// Open delegation delegate (allows any delegate)
-export const OPEN_DELEGATE = '0x000000000000000000000000000000000000A11';
+// Any delegate constant (allows any address to redeem)
+// Per DelegationManager.sol: address public constant ANY_DELEGATE = address(0xa11)
+export const ANY_DELEGATE = '0x0000000000000000000000000000000000000a11';
 
 // =============================================================================
 // CLIENT SETUP
@@ -143,24 +145,46 @@ export function encodeERC20TransferAmountTerms(tokenAddress, amount) {
 /**
  * Encode terms for TimestampEnforcer
  * 
- * From the contract source:
+ * From the contract source (TimestampEnforcer.sol getTermsInfo):
  *   require(_terms.length == 32, "TimestampEnforcer:invalid-terms-length");
- *   threshold_ = uint128(bytes16(_terms[:16]));
- *   mode_ = uint128(bytes16(_terms[16:]));
+ *   timestampBeforeThreshold_ = uint128(bytes16(_terms[16:]));  // LAST 16 bytes
+ *   timestampAfterThreshold_ = uint128(bytes16(_terms[:16]));   // FIRST 16 bytes
  * 
- * Mode: 0 = before (block.timestamp < threshold), 1 = after (block.timestamp >= threshold)
+ * The enforcer checks:
+ *   - If timestampAfterThreshold > 0 && block.timestamp <= timestampAfterThreshold: REVERTS "early-delegation"
+ *   - If timestampBeforeThreshold > 0 && block.timestamp >= timestampBeforeThreshold: REVERTS "expired-delegation"
  * 
- * @param {number} timestamp - Unix timestamp threshold
- * @param {string} mode - 'before' (for expiry) or 'after' (for start time)
+ * So for an expiry-only delegation: afterThreshold=0, beforeThreshold=expiryTime
+ * For a start-time-only delegation: afterThreshold=startTime, beforeThreshold=0
+ * For both (time window): afterThreshold=startTime, beforeThreshold=expiryTime
+ * 
+ * @param {Object} options - Timestamp options
+ * @param {number} [options.notBefore] - Earliest time delegation is valid (0 = no minimum)
+ * @param {number} [options.notAfter] - Latest time delegation is valid (0 = no expiry)
  * @returns {string} Packed encoded terms (32 bytes)
  */
-export function encodeTimestampTerms(timestamp, mode = 'before') {
-  // encodePacked(uint128 threshold, uint128 mode) = 16 + 16 = 32 bytes
-  const modeValue = mode === 'before' ? 0n : 1n;
+export function encodeTimestampTerms({ notBefore = 0, notAfter = 0 }) {
+  // encodePacked(uint128 timestampAfterThreshold, uint128 timestampBeforeThreshold)
+  // First 16 bytes: after threshold (must be AFTER this time)
+  // Last 16 bytes: before threshold (must be BEFORE this time, i.e., expiry)
   return encodePacked(
     ['uint128', 'uint128'],
-    [BigInt(timestamp), modeValue]
+    [BigInt(notBefore), BigInt(notAfter)]
   );
+}
+
+/**
+ * Legacy function for backwards compatibility
+ * @deprecated Use encodeTimestampTerms({ notBefore, notAfter }) instead
+ */
+export function encodeTimestampTermsLegacy(timestamp, mode = 'before') {
+  if (mode === 'before') {
+    // Expiry: must execute BEFORE this timestamp
+    return encodeTimestampTerms({ notBefore: 0, notAfter: timestamp });
+  } else {
+    // Start time: must execute AFTER this timestamp
+    return encodeTimestampTerms({ notBefore: timestamp, notAfter: 0 });
+  }
 }
 
 /**
@@ -264,12 +288,13 @@ export function buildDelegation({
     });
   }
   
-  // 3. TimestampEnforcer - expiry time (mode=0 means before, i.e., must execute before this time)
+  // 3. TimestampEnforcer - expiry time
+  // notBefore=0 (no minimum), notAfter=expiryTimestamp (must execute before this time)
   if (expirySeconds) {
     const expiryTimestamp = Math.floor(Date.now() / 1000) + expirySeconds;
     caveats.push({
       enforcer: DELEGATION_FRAMEWORK.TimestampEnforcer,
-      terms: encodeTimestampTerms(expiryTimestamp, 'before'),
+      terms: encodeTimestampTerms({ notBefore: 0, notAfter: expiryTimestamp }),
       args: '0x'
     });
   }
@@ -396,11 +421,11 @@ export function validateSubDelegationScope(parentDelegation, subDelegationParams
   // Check expiry
   const parentExpiryCaveat = findCaveat(DELEGATION_FRAMEWORK.TimestampEnforcer);
   if (parentExpiryCaveat && subDelegationParams.expirySeconds) {
-    // Decode parent terms: encodePacked(uint128[16], uint128[16]) = 32 bytes
-    // Threshold is first 16 bytes
-    const parentExpiry = Number(BigInt('0x' + parentExpiryCaveat.terms.slice(2, 34)));
+    // Decode parent terms: encodePacked(uint128 afterThreshold, uint128 beforeThreshold)
+    // beforeThreshold (expiry) is LAST 16 bytes (chars 34-66)
+    const parentExpiry = Number(BigInt('0x' + parentExpiryCaveat.terms.slice(34, 66)));
     const subExpiry = Math.floor(Date.now() / 1000) + subDelegationParams.expirySeconds;
-    if (subExpiry > parentExpiry) {
+    if (parentExpiry > 0 && subExpiry > parentExpiry) {
       errors.push(`Sub-delegation expiry exceeds parent expiry`);
     }
   }
@@ -428,12 +453,21 @@ export function validateTransfer(delegation, to, amount) {
       }
     }
     
-    // Check timestamp expiry
+    // Check timestamp constraints
     if (enforcerLower === DELEGATION_FRAMEWORK.TimestampEnforcer.toLowerCase()) {
-      // Terms: encodePacked(uint128[16], uint128[16])
-      const threshold = Number(BigInt('0x' + caveat.terms.slice(2, 34)));
-      const mode = Number(BigInt('0x' + caveat.terms.slice(34, 66)));
-      if (mode === 0 && now >= threshold) { // Before mode
+      // Terms: encodePacked(uint128 timestampAfterThreshold, uint128 timestampBeforeThreshold)
+      // First 16 bytes (chars 2-34): after threshold (must be AFTER this time)
+      // Last 16 bytes (chars 34-66): before threshold (must be BEFORE this time, i.e., expiry)
+      const timestampAfterThreshold = Number(BigInt('0x' + caveat.terms.slice(2, 34)));
+      const timestampBeforeThreshold = Number(BigInt('0x' + caveat.terms.slice(34, 66)));
+      
+      // Check if too early
+      if (timestampAfterThreshold > 0 && now <= timestampAfterThreshold) {
+        errors.push(`Delegation not yet active (valid after ${new Date(timestampAfterThreshold * 1000).toISOString()})`);
+      }
+      
+      // Check if expired
+      if (timestampBeforeThreshold > 0 && now >= timestampBeforeThreshold) {
         errors.push('Delegation has expired');
       }
     }
@@ -478,10 +512,15 @@ export function formatDelegation(delegation) {
         lines.push(`    Amount: ${formatUnits(amount, USDC_DECIMALS)} USDC max`);
       }
       if (enforcerName === 'TimestampEnforcer') {
-        // encodePacked(uint128[16], uint128[16])
-        const threshold = Number(BigInt('0x' + caveat.terms.slice(2, 34)));
-        const mode = Number(BigInt('0x' + caveat.terms.slice(34, 66)));
-        lines.push(`    ${mode === 0 ? 'Expires' : 'Valid after'}: ${new Date(threshold * 1000).toISOString()}`);
+        // encodePacked(uint128 afterThreshold, uint128 beforeThreshold)
+        const afterThreshold = Number(BigInt('0x' + caveat.terms.slice(2, 34)));
+        const beforeThreshold = Number(BigInt('0x' + caveat.terms.slice(34, 66)));
+        if (afterThreshold > 0) {
+          lines.push(`    Valid after: ${new Date(afterThreshold * 1000).toISOString()}`);
+        }
+        if (beforeThreshold > 0) {
+          lines.push(`    Expires: ${new Date(beforeThreshold * 1000).toISOString()}`);
+        }
       }
       if (enforcerName === 'ValueLteEnforcer') {
         const maxValue = BigInt(caveat.terms);

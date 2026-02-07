@@ -104,15 +104,30 @@ async function main() {
         }
         
         case 'TimestampEnforcer': {
-          // Terms: encodePacked(uint128[16], uint128[16]) = 32 bytes
-          const threshold = Number(BigInt('0x' + caveat.terms.slice(2, 34)));
-          const mode = Number(BigInt('0x' + caveat.terms.slice(34, 66)));
-          const expiry = new Date(threshold * 1000);
-          const remaining = threshold - now;
+          // Terms: encodePacked(uint128 afterThreshold, uint128 beforeThreshold) = 32 bytes
+          // afterThreshold: must execute AFTER this time (0 = no minimum)
+          // beforeThreshold: must execute BEFORE this time (0 = no expiry)
+          const afterThreshold = Number(BigInt('0x' + caveat.terms.slice(2, 34)));
+          const beforeThreshold = Number(BigInt('0x' + caveat.terms.slice(34, 66)));
           
-          console.log(`     ⏰ ${mode === 0 ? 'Expires' : 'Valid after'}: ${expiry.toISOString()}`);
+          // Show time constraints
+          if (afterThreshold > 0) {
+            const afterDate = new Date(afterThreshold * 1000);
+            console.log(`     ⏰ Valid after: ${afterDate.toISOString()}`);
+            if (now <= afterThreshold) {
+              const remaining = afterThreshold - now;
+              const hours = Math.floor(remaining / 3600);
+              const minutes = Math.floor((remaining % 3600) / 60);
+              console.log(`     Status: ⏳ Not yet active - ${hours}h ${minutes}m until valid`);
+            } else {
+              console.log(`     Status: ✅ Start time passed`);
+            }
+          }
           
-          if (mode === 0) { // Before mode (expiry)
+          if (beforeThreshold > 0) {
+            const expiryDate = new Date(beforeThreshold * 1000);
+            console.log(`     ⏰ Expires: ${expiryDate.toISOString()}`);
+            const remaining = beforeThreshold - now;
             if (remaining > 0) {
               const days = Math.floor(remaining / 86400);
               const hours = Math.floor((remaining % 86400) / 3600);
@@ -121,12 +136,10 @@ async function main() {
             } else {
               console.log(`     Status: ❌ EXPIRED ${Math.abs(remaining / 60).toFixed(0)} minutes ago`);
             }
-          } else { // After mode
-            if (now >= threshold) {
-              console.log(`     Status: ✅ Now active`);
-            } else {
-              console.log(`     Status: ⏳ Not yet active`);
-            }
+          }
+          
+          if (afterThreshold === 0 && beforeThreshold === 0) {
+            console.log(`     ⚠️  No time constraints (perpetual)`);
           }
           break;
         }

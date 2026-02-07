@@ -1,5 +1,52 @@
 # Changelog
 
+## [1.3.0] - 2026-02-07
+
+### 🔧 Critical Bug Fixes
+
+This release fixes several critical bugs discovered during comprehensive review against the MetaMask Delegation Framework v1.3.0 source code.
+
+#### Fixed
+
+- **CRITICAL: ROOT_AUTHORITY constant was wrong**
+  - Was: `0x0000...0000` (all zeros)
+  - Now: `0xffff...ffff` (all ones, matching `DelegationManager.sol`)
+  
+- **CRITICAL: TimestampEnforcer terms encoding was completely wrong**
+  - Old (WRONG): `encodePacked(timestamp, mode)` where mode=0/1
+  - New (CORRECT): `encodePacked(afterThreshold, beforeThreshold)`
+  - The contract uses TWO timestamps, not a timestamp+mode:
+    - First 16 bytes: `afterThreshold` (must execute AFTER this time, 0=no min)
+    - Last 16 bytes: `beforeThreshold` (must execute BEFORE this time, 0=no expiry)
+
+- **CRITICAL: Permission context encoding in execute-transfer.mjs**
+  - Was: Hex-encoded JSON string (would fail on-chain)
+  - Now: Proper ABI encoding of `Delegation[]` tuple array
+
+- **ANY_DELEGATE constant fixed**
+  - Was: `0x000...A11` (incorrect casing)
+  - Now: `0x0000000000000000000000000000000000000a11` (proper checksum)
+
+#### Changed
+
+- **encodeTimestampTerms()** - Now takes `{ notBefore, notAfter }` object instead of `(timestamp, mode)`
+- **validateTransfer()** - Fixed timestamp decoding to use new encoding
+- **validateSubDelegationScope()** - Fixed timestamp decoding for parent expiry check
+- **formatDelegation()** - Now properly displays both afterThreshold and beforeThreshold
+- **check-scope.mjs** - Complete rewrite of TimestampEnforcer display logic
+
+#### Documentation
+
+- **DeleGator Smart Account Requirement** - Added critical documentation explaining that the delegator MUST be a DeleGator smart account (not an EOA). The DelegationManager calls `executeFromExecutor()` on the delegator.
+- **TimestampEnforcer** - Detailed documentation of the two-threshold system
+- **Important Constants** - Added ROOT_AUTHORITY and ANY_DELEGATE to docs
+
+#### Added
+
+- **encodeTimestampTermsLegacy()** - Backwards compatibility function (deprecated)
+
+---
+
 ## [1.2.0] - 2026-02-07
 
 ### 🧹 Simplified Enforcer Stack
