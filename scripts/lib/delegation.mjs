@@ -14,7 +14,9 @@ import {
   toHex,
   hexToBytes,
   encodePacked,
-  hashTypedData
+  hashTypedData,
+  numberToHex,
+  padHex
 } from 'viem';
 import { baseSepolia } from 'viem/chains';
 import { privateKeyToAccount } from 'viem/accounts';
@@ -32,13 +34,12 @@ export const USDC_DECIMALS = 6;
 export const DELEGATION_FRAMEWORK = {
   DelegationManager: '0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3',
   
-  // Caveat Enforcers
-  AllowedCalldataEnforcer: '0xc2b0d624c1c4319760C96503BA27C347F3260f55',
-  AllowedMethodsEnforcer: '0x2c21fD0Cb9DC8445CB3fb0DC5E7Bb0Aca01842B5',
-  AllowedTargetsEnforcer: '0x7F20f61b1f09b08D970938F6fa563634d65c4EeB',
-  TimestampEnforcer: '0x1046bb45C8d673d4ea75321280DB34899413c069',
+  // Core Caveat Enforcers (simplified - only what we need)
   ERC20TransferAmountEnforcer: '0xf100b0819427117EcF76Ed94B358B1A5b5C6D2Fc',
-  LimitedCallsEnforcer: '0x04658B29F6b82ed55274221a06Fc97D318E25416',
+  TimestampEnforcer: '0x1046bb45C8d673d4ea75321280DB34899413c069',
+  ValueLteEnforcer: '0x92Bf12322527cAA612fd31a0e810472BBB106A8F',
+  
+  // Optional enforcers (available but not used by default)
   RedeemerEnforcer: '0xE144b0b2618071B4E56f746313528a669c7E65c5',
   NonceEnforcer: '0xDE4f2FAC4B3D87A1d9953Ca5FC09FCa7F366254f',
 };
@@ -114,58 +115,74 @@ export function getClients(privateKey) {
 
 /**
  * Encode terms for ERC20TransferAmountEnforcer
+ * 
+ * From the contract source:
+ *   require(_terms.length == 52, "ERC20TransferAmountEnforcer:invalid-terms-length");
+ *   allowedContract_ = address((bytes20(_terms[:20])));
+ *   maxTokens_ = uint256(bytes32(_terms[20:]));
+ * 
+ * So terms = encodePacked(address, uint256) = 20 + 32 = 52 bytes
+ * 
+ * This enforcer ALSO validates:
+ *   - Target contract matches token address
+ *   - Method is IERC20.transfer.selector  
+ *   - Amount doesn't exceed limit
+ * 
  * @param {string} tokenAddress - ERC20 token address
  * @param {bigint} amount - Maximum transfer amount in wei
- * @returns {string} ABI-encoded terms
+ * @returns {string} Packed encoded terms (52 bytes)
  */
 export function encodeERC20TransferAmountTerms(tokenAddress, amount) {
-  return encodeAbiParameters(
-    parseAbiParameters('address token, uint256 amount'),
+  // encodePacked(address, uint256) = 20 bytes + 32 bytes = 52 bytes
+  return encodePacked(
+    ['address', 'uint256'],
     [tokenAddress, amount]
   );
 }
 
 /**
  * Encode terms for TimestampEnforcer
- * Enforces: block.timestamp must be < threshold (expiry time)
- * @param {number} expiryTimestamp - Unix timestamp when delegation expires
- * @returns {string} ABI-encoded terms
+ * 
+ * From the contract source:
+ *   require(_terms.length == 32, "TimestampEnforcer:invalid-terms-length");
+ *   threshold_ = uint128(bytes16(_terms[:16]));
+ *   mode_ = uint128(bytes16(_terms[16:]));
+ * 
+ * Mode: 0 = before (block.timestamp < threshold), 1 = after (block.timestamp >= threshold)
+ * 
+ * @param {number} timestamp - Unix timestamp threshold
+ * @param {string} mode - 'before' (for expiry) or 'after' (for start time)
+ * @returns {string} Packed encoded terms (32 bytes)
  */
-export function encodeTimestampTerms(expiryTimestamp, mode = 'before') {
-  // mode: 0 = before (block.timestamp < threshold), 1 = after (block.timestamp >= threshold)
-  return encodeAbiParameters(
-    parseAbiParameters('uint128 threshold, uint128 mode'),
-    [BigInt(expiryTimestamp), mode === 'before' ? 0n : 1n]
+export function encodeTimestampTerms(timestamp, mode = 'before') {
+  // encodePacked(uint128 threshold, uint128 mode) = 16 + 16 = 32 bytes
+  const modeValue = mode === 'before' ? 0n : 1n;
+  return encodePacked(
+    ['uint128', 'uint128'],
+    [BigInt(timestamp), modeValue]
   );
 }
 
 /**
- * Encode terms for AllowedTargetsEnforcer
- * @param {string[]} allowedAddresses - List of allowed target addresses
- * @returns {string} ABI-encoded terms
+ * Encode terms for ValueLteEnforcer
+ * 
+ * From the contract source:
+ *   require(_terms.length == 32, "ValueLteEnforcer:invalid-terms-length");
+ *   value_ = uint256(bytes32(_terms));
+ * 
+ * This enforcer ensures msg.value <= terms value.
+ * Set to 0 to prevent any ETH transfers.
+ * 
+ * @param {bigint} maxValue - Maximum ETH value allowed (0 to prevent ETH transfers)
+ * @returns {string} ABI encoded terms (32 bytes)
  */
-export function encodeAllowedTargetsTerms(allowedAddresses) {
-  return encodeAbiParameters(
-    parseAbiParameters('address[]'),
-    [allowedAddresses]
-  );
+export function encodeValueLteTerms(maxValue = 0n) {
+  // Just a single uint256, ABI encoded (32 bytes)
+  return padHex(numberToHex(maxValue), { size: 32 });
 }
 
 /**
- * Encode terms for AllowedMethodsEnforcer
- * @param {string[]} methodSignatures - e.g., ['transfer(address,uint256)', 'approve(address,uint256)']
- * @returns {string} ABI-encoded terms (array of 4-byte selectors)
- */
-export function encodeAllowedMethodsTerms(methodSignatures) {
-  const selectors = methodSignatures.map(sig => 
-    keccak256(toBytes(sig)).slice(0, 10) // First 4 bytes
-  );
-  // Encode as packed bytes4[]
-  return concat(selectors);
-}
-
-/**
- * Encode terms for RedeemerEnforcer
+ * Encode terms for RedeemerEnforcer (optional)
  * Restricts which addresses can redeem the delegation
  * @param {string[]} allowedRedeemers - List of addresses allowed to redeem
  * @returns {string} ABI-encoded terms
@@ -174,18 +191,6 @@ export function encodeRedeemerTerms(allowedRedeemers) {
   return encodeAbiParameters(
     parseAbiParameters('address[]'),
     [allowedRedeemers]
-  );
-}
-
-/**
- * Encode terms for LimitedCallsEnforcer
- * @param {number} maxCalls - Maximum number of calls allowed
- * @returns {string} ABI-encoded terms
- */
-export function encodeLimitedCallsTerms(maxCalls) {
-  return encodeAbiParameters(
-    parseAbiParameters('uint256'),
-    [BigInt(maxCalls)]
   );
 }
 
@@ -210,14 +215,22 @@ export function parseDuration(duration) {
 /**
  * Build a proper ERC-7710 compliant delegation with caveats
  * 
+ * SIMPLIFIED ENFORCER STACK (per Ryan's feedback):
+ * 1. ERC20TransferAmountEnforcer - handles token address, transfer method, AND amount limit
+ * 2. ValueLteEnforcer(0) - prevents ETH transfers (only ERC20)
+ * 3. TimestampEnforcer - expiry time
+ * 
+ * We DON'T need:
+ * - AllowedMethodsEnforcer (ERC20TransferAmountEnforcer checks transfer selector)
+ * - AllowedTargetsEnforcer (ERC20TransferAmountEnforcer checks token address)
+ * - LimitedCallsEnforcer (not needed for this use case)
+ * 
  * @param {Object} params
  * @param {string} params.delegator - Address granting the delegation
  * @param {string} params.delegate - Address receiving the delegation
  * @param {string} [params.authority] - Parent delegation hash (ROOT_AUTHORITY for root)
- * @param {string|number} [params.amount] - Maximum USDC amount
+ * @param {string|number} params.amount - Maximum USDC amount
  * @param {number} [params.expirySeconds] - Seconds until expiry
- * @param {string[]} [params.allowedRecipients] - Whitelist of recipients
- * @param {number} [params.maxCalls] - Maximum number of calls
  * @returns {Object} Delegation object with proper caveat structure
  */
 export function buildDelegation({
@@ -225,53 +238,38 @@ export function buildDelegation({
   delegate,
   authority = ROOT_AUTHORITY,
   amount,
-  expirySeconds,
-  allowedRecipients = [],
-  maxCalls
+  expirySeconds
 }) {
   const caveats = [];
   
-  // 1. ERC20 Transfer Amount Enforcer - limits total USDC transferred
+  // 1. ValueLteEnforcer(0) - MUST add first to prevent ETH transfers
+  // This ensures the delegation can only be used for ERC20 transfers, not ETH
+  caveats.push({
+    enforcer: DELEGATION_FRAMEWORK.ValueLteEnforcer,
+    terms: encodeValueLteTerms(0n),
+    args: '0x'
+  });
+  
+  // 2. ERC20TransferAmountEnforcer - limits total USDC transferred
+  // This enforcer handles:
+  //   - Token address validation (target must be USDC)
+  //   - Method validation (must be transfer(address,uint256))
+  //   - Amount tracking/limiting
   if (amount) {
     const amountWei = parseUnits(amount.toString(), USDC_DECIMALS);
     caveats.push({
       enforcer: DELEGATION_FRAMEWORK.ERC20TransferAmountEnforcer,
       terms: encodeERC20TransferAmountTerms(USDC_ADDRESS, amountWei),
-      args: '0x' // Empty args - can be populated at redemption time
+      args: '0x'
     });
   }
   
-  // 2. Timestamp Enforcer - expiry time
+  // 3. TimestampEnforcer - expiry time (mode=0 means before, i.e., must execute before this time)
   if (expirySeconds) {
     const expiryTimestamp = Math.floor(Date.now() / 1000) + expirySeconds;
     caveats.push({
       enforcer: DELEGATION_FRAMEWORK.TimestampEnforcer,
       terms: encodeTimestampTerms(expiryTimestamp, 'before'),
-      args: '0x'
-    });
-  }
-  
-  // 3. Allowed Targets Enforcer - restrict to specific recipients
-  if (allowedRecipients.length > 0) {
-    caveats.push({
-      enforcer: DELEGATION_FRAMEWORK.AllowedTargetsEnforcer,
-      terms: encodeAllowedTargetsTerms(allowedRecipients),
-      args: '0x'
-    });
-  }
-  
-  // 4. Allowed Methods Enforcer - restrict to transfer/approve only
-  caveats.push({
-    enforcer: DELEGATION_FRAMEWORK.AllowedMethodsEnforcer,
-    terms: encodeAllowedMethodsTerms(['transfer(address,uint256)', 'approve(address,uint256)']),
-    args: '0x'
-  });
-  
-  // 5. Limited Calls Enforcer - optional max calls
-  if (maxCalls) {
-    caveats.push({
-      enforcer: DELEGATION_FRAMEWORK.LimitedCallsEnforcer,
-      terms: encodeLimitedCallsTerms(maxCalls),
       args: '0x'
     });
   }
@@ -386,8 +384,9 @@ export function validateSubDelegationScope(parentDelegation, subDelegationParams
   // Check amount
   const parentAmountCaveat = findCaveat(DELEGATION_FRAMEWORK.ERC20TransferAmountEnforcer);
   if (parentAmountCaveat && subDelegationParams.amount) {
-    // Decode parent terms: (address token, uint256 amount)
-    const parentAmount = BigInt('0x' + parentAmountCaveat.terms.slice(66)); // Second word
+    // Decode parent terms: encodePacked(address[20], uint256[32]) = 52 bytes
+    // Amount is bytes 20-52 (the uint256)
+    const parentAmount = BigInt('0x' + parentAmountCaveat.terms.slice(42)); // Skip 0x + 40 hex chars (20 bytes)
     const subAmount = parseUnits(subDelegationParams.amount.toString(), USDC_DECIMALS);
     if (subAmount > parentAmount) {
       errors.push(`Sub-delegation amount (${subDelegationParams.amount}) exceeds parent scope`);
@@ -397,21 +396,13 @@ export function validateSubDelegationScope(parentDelegation, subDelegationParams
   // Check expiry
   const parentExpiryCaveat = findCaveat(DELEGATION_FRAMEWORK.TimestampEnforcer);
   if (parentExpiryCaveat && subDelegationParams.expirySeconds) {
-    // Decode parent terms: (uint128 threshold, uint128 mode)
+    // Decode parent terms: encodePacked(uint128[16], uint128[16]) = 32 bytes
+    // Threshold is first 16 bytes
     const parentExpiry = Number(BigInt('0x' + parentExpiryCaveat.terms.slice(2, 34)));
     const subExpiry = Math.floor(Date.now() / 1000) + subDelegationParams.expirySeconds;
     if (subExpiry > parentExpiry) {
       errors.push(`Sub-delegation expiry exceeds parent expiry`);
     }
-  }
-  
-  // Check recipients
-  const parentTargetsCaveat = findCaveat(DELEGATION_FRAMEWORK.AllowedTargetsEnforcer);
-  if (parentTargetsCaveat && subDelegationParams.allowedRecipients?.length > 0) {
-    // For simplicity, we'll require the parent to have the same or broader target list
-    // Full validation would require decoding the ABI-encoded address array
-    // This is a security check that should be enhanced in production
-    console.warn('⚠️  Recipient validation requires full ABI decoding - verify manually');
   }
   
   return { valid: errors.length === 0, errors };
@@ -430,7 +421,8 @@ export function validateTransfer(delegation, to, amount) {
     
     // Check ERC20 amount limit
     if (enforcerLower === DELEGATION_FRAMEWORK.ERC20TransferAmountEnforcer.toLowerCase()) {
-      const maxAmount = BigInt('0x' + caveat.terms.slice(66));
+      // Terms: encodePacked(address[20], uint256[32])
+      const maxAmount = BigInt('0x' + caveat.terms.slice(42));
       if (amountWei > maxAmount) {
         errors.push(`Transfer amount exceeds delegated limit of ${formatUnits(maxAmount, USDC_DECIMALS)} USDC`);
       }
@@ -438,6 +430,7 @@ export function validateTransfer(delegation, to, amount) {
     
     // Check timestamp expiry
     if (enforcerLower === DELEGATION_FRAMEWORK.TimestampEnforcer.toLowerCase()) {
+      // Terms: encodePacked(uint128[16], uint128[16])
       const threshold = Number(BigInt('0x' + caveat.terms.slice(2, 34)));
       const mode = Number(BigInt('0x' + caveat.terms.slice(34, 66)));
       if (mode === 0 && now >= threshold) { // Before mode
@@ -445,7 +438,8 @@ export function validateTransfer(delegation, to, amount) {
       }
     }
     
-    // Note: AllowedTargetsEnforcer validation would require full ABI decoding
+    // ValueLteEnforcer doesn't need client-side validation for transfers
+    // (we always use value=0 for ERC20 transfers)
   }
   
   return { valid: errors.length === 0, errors };
@@ -477,12 +471,25 @@ export function formatDelegation(delegation) {
     // Decode and display specific caveats
     try {
       if (enforcerName === 'ERC20TransferAmountEnforcer') {
-        const amount = BigInt('0x' + caveat.terms.slice(66));
-        lines.push(`    Amount: ${formatUnits(amount, USDC_DECIMALS)} USDC`);
+        // encodePacked(address[20], uint256[32])
+        const token = '0x' + caveat.terms.slice(2, 42);
+        const amount = BigInt('0x' + caveat.terms.slice(42));
+        lines.push(`    Token:  ${token}`);
+        lines.push(`    Amount: ${formatUnits(amount, USDC_DECIMALS)} USDC max`);
       }
       if (enforcerName === 'TimestampEnforcer') {
+        // encodePacked(uint128[16], uint128[16])
         const threshold = Number(BigInt('0x' + caveat.terms.slice(2, 34)));
-        lines.push(`    Expires: ${new Date(threshold * 1000).toISOString()}`);
+        const mode = Number(BigInt('0x' + caveat.terms.slice(34, 66)));
+        lines.push(`    ${mode === 0 ? 'Expires' : 'Valid after'}: ${new Date(threshold * 1000).toISOString()}`);
+      }
+      if (enforcerName === 'ValueLteEnforcer') {
+        const maxValue = BigInt(caveat.terms);
+        if (maxValue === 0n) {
+          lines.push(`    Max ETH: 0 (ERC20 only, no ETH transfers)`);
+        } else {
+          lines.push(`    Max ETH: ${formatUnits(maxValue, 18)} ETH`);
+        }
       }
     } catch (e) {
       lines.push(`    Terms: ${caveat.terms.slice(0, 20)}...`);
@@ -531,7 +538,7 @@ export function encodePermissionContext(delegationChain) {
       terms: c.terms,
       args: c.args || '0x'
     })),
-    salt: d.salt,
+    salt: d.salt.toString(),
     signature: d.signature
   }));
   

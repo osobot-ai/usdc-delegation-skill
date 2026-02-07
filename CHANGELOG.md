@@ -1,5 +1,55 @@
 # Changelog
 
+## [1.2.0] - 2026-02-07
+
+### 🧹 Simplified Enforcer Stack
+
+Based on Ryan's feedback, this release simplifies the enforcer stack to the minimum required set.
+
+#### Changed
+
+- **Enforcer Stack** - Reduced to just 3 essential enforcers:
+  1. `ValueLteEnforcer(0)` - Prevents ETH transfers (ERC20 only)
+  2. `ERC20TransferAmountEnforcer` - Handles token, method, AND amount validation
+  3. `TimestampEnforcer` - Expiry time
+
+- **Terms Encoding** - Fixed `ERC20TransferAmountEnforcer` to use `encodePacked` (52 bytes) instead of `encodeAbiParameters` (64 bytes), matching the contract's expectations:
+  - `encodePacked(address[20], uint256[32])` = 52 bytes total
+
+#### Added
+
+- **ValueLteEnforcer** - New enforcer to prevent ETH transfers:
+  - Address: `0x92Bf12322527cAA612fd31a0e810472BBB106A8F`
+  - Terms: `uint256` (32 bytes) set to 0
+
+- **encodeValueLteTerms()** - Helper function for ValueLteEnforcer terms
+
+#### Removed
+
+- **AllowedMethodsEnforcer** - Not needed! `ERC20TransferAmountEnforcer` already validates the method is `transfer(address,uint256)`
+- **AllowedTargetsEnforcer** - Not needed! `ERC20TransferAmountEnforcer` already validates the target is the token address
+- **LimitedCallsEnforcer** - Not needed for this use case
+- **--recipients** and **--max-calls** CLI options - Removed as these enforcers are no longer used
+
+#### Why This Matters
+
+The `ERC20TransferAmountEnforcer` contract does MORE than just limit the amount. From the source:
+
+```solidity
+require(allowedContract_ == target_, "ERC20TransferAmountEnforcer:invalid-contract");
+require(bytes4(callData_[0:4]) == IERC20.transfer.selector, "ERC20TransferAmountEnforcer:invalid-method");
+```
+
+So it already handles target validation and method validation! Adding separate enforcers for these was redundant.
+
+The new `ValueLteEnforcer(0)` ensures no ETH can be sent with the call, completing the security model.
+
+### Migration Guide
+
+Delegations created with v1.1.0 will have extra enforcers that are now considered unnecessary. They will still work, but new delegations will use the simplified stack.
+
+---
+
 ## [1.1.0] - 2025-02-07
 
 ### 🔒 ERC-7710 Compliance Improvements
