@@ -55,6 +55,25 @@ Sub-Agent B (Sub-delegate)
 3. Agent (even if just an EOA) redeems via DelegationManager
 4. DelegationManager calls the Human's Smart Account to execute the transfer
 
+## 🎮 Interactive Demo
+
+Try the interactive demo app to visualize the complete delegation flow:
+
+```bash
+cd examples/demo-app
+npm install
+npm run dev
+# Open http://localhost:3000
+```
+
+The demo shows:
+- Visual delegation tree with hierarchical relationships
+- Step-by-step creation of root delegation and sub-delegations
+- Transaction simulation and execution
+- Real-time allowance tracking
+
+See [examples/demo-app/README.md](examples/demo-app/README.md) for details.
+
 ## Installation
 
 ```bash
